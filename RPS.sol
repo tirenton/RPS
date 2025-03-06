@@ -4,10 +4,11 @@ pragma solidity >=0.8.2 <0.9.0;
 import "./CommitReveal.sol";
 import "./TimeUnit.sol";
 
-contract RPSLS is CommitReveal {
+contract RPSLS is CommitReveal, TimeUnit {
     uint public numPlayer = 0;
     uint public reward = 0;
     uint public numRevealed = 0;
+    uint256 public revealDeadline; // เวลาสูงสุดที่ต้อง Reveal
 
     struct Player {
         bool hasRevealed;
@@ -19,6 +20,8 @@ contract RPSLS is CommitReveal {
 
     address constant allowed1 = 0x5B38Da6a701c568545dCfcB03FcB875f56beddC4;
     address constant allowed2 = 0xAb8483F64d9C6d1EcF9b849Ae677dD3315835cb2;
+    address constant allowed3 = 0x4B20993Bc481177ec7E8f571ceCaE8A9e22C02db;
+    address constant allowed4 = 0x78731D3Ca6b7E34aC0F824c42a7cC18A495cabaB;
 
     function isAllowed(address _addr) internal pure returns (bool) {
         return (_addr == allowed1 || _addr == allowed2);
@@ -38,6 +41,12 @@ contract RPSLS is CommitReveal {
         playerAddresses.push(msg.sender);
         numPlayer++;
         reward += msg.value;
+
+        // กำหนดเวลา Reveal (เช่น 5 นาที)
+        if (numPlayer == 2) {
+            setStartTime();
+            revealDeadline = block.timestamp + 5 minutes;
+        }
     }
 
     // **ผู้เล่น commit ค่า hash**
@@ -51,7 +60,7 @@ contract RPSLS is CommitReveal {
         emit CommitHash(msg.sender, hashedChoice, commits[msg.sender].block);
     }
 
-    // ✅ **ผู้เล่น reveal (ใช้ค่าก่อน hash)**
+    // **ผู้เล่น reveal (ใช้ค่าก่อน hash)**
     function reveal(bytes32 revealHash) public override {
         require(numPlayer == 2, "Need 2 players");
         require(players[msg.sender].hasRevealed == false, "Already revealed");
@@ -72,6 +81,30 @@ contract RPSLS is CommitReveal {
         if (numRevealed == 2) {
             _checkWinnerAndPay();
         }
+    }
+
+    // ✅ **บังคับให้เกมจบเมื่อมีผู้เล่นไม่ Reveal ตามเวลา**
+    function forceReveal() public {
+        require(numPlayer == 2, "Game is not started");
+        require(block.timestamp >= revealDeadline, "Reveal deadline not reached");
+
+        address payable player1 = payable(playerAddresses[0]);
+        address payable player2 = payable(playerAddresses[1]);
+
+        bool player1Revealed = players[player1].hasRevealed;
+        bool player2Revealed = players[player2].hasRevealed;
+
+        if (player1Revealed && !player2Revealed) {
+            player1.transfer(reward); // คืนเงินให้ผู้เล่นที่ reveal
+        } else if (!player1Revealed && player2Revealed) {
+            player2.transfer(reward); // คืนเงินให้ผู้เล่นที่ reveal
+        } else {
+            // ถ้าไม่มีใคร reveal เลย ให้คืนเงินทั้งสองฝ่าย
+            player1.transfer(1 ether);
+            player2.transfer(1 ether);
+        }
+
+        _resetGame();
     }
 
     event RevealHash(address sender, bytes32 revealHash, uint choice);
